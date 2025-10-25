@@ -1,0 +1,24 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Data (keep your swing data private)
+data/
+./data
+*.csv
+!example_summary.csv
+
+# Editors
+.vscode/
+.ipynb_checkpoints/
+
+# Notebooks
+*.ipynb
+
+.env
