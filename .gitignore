@@ -1,0 +1,36 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (keep swing data private)
+data/
+*.csv
+
+# Editors
+.vscode/
+.idea/
+
+# Notebooks contain hardcoded local paths — keep out of git
+*.ipynb
+.ipynb_checkpoints/
+
+# Credentials and secrets — never commit these
+.env
+.env.local
+.env.*.local
+.streamlit/secrets.toml
+
+# SQL dumps/exports — but NOT the project schema
+*.sql
+!api/schema.sql
