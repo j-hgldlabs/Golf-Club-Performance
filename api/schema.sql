@@ -99,3 +99,21 @@ create policy "users see own summaries"
   with check (user_id = auth.uid());
 
 create index if not exists club_summaries_user_id_idx on club_summaries (user_id);
+
+
+-- -------------------------------------------------------
+-- 4. user_preferences
+--    Per-user settings stored as JSONB (club aliases, etc.)
+-- -------------------------------------------------------
+create table if not exists user_preferences (
+  user_id      uuid primary key references auth.users (id) on delete cascade,
+  club_aliases jsonb not null default '{}'
+);
+
+alter table user_preferences enable row level security;
+
+drop policy if exists "users manage own preferences" on user_preferences;
+create policy "users manage own preferences"
+  on user_preferences for all
+  using  (user_id = auth.uid())
+  with check (user_id = auth.uid());

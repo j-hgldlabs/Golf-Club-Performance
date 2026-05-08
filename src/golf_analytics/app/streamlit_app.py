@@ -149,6 +149,11 @@ def _load_avg_carry(token: str) -> pd.DataFrame:
     return api.get_avg_carry(token)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_preferences(token: str) -> dict:
+    return api.get_preferences(token)
+
+
 # ---------------------------------------------------------------------------
 # Shared UI helpers
 # ---------------------------------------------------------------------------
@@ -241,6 +246,40 @@ def run() -> None:
                 st.cache_data.clear()
             except Exception as e:
                 st.error(f"Generate failed: {e}")
+
+        st.divider()
+
+        st.subheader("C) Club aliases")
+        st.caption("Rename clubs as they appear in your raw data (e.g. 3h → UW). One alias per line: `original=display`.")
+
+        try:
+            current_aliases = _load_preferences(_token()).get("club_aliases", {})
+        except Exception:
+            current_aliases = {}
+
+        alias_text = st.text_area(
+            "Aliases",
+            value="\n".join(f"{k}={v}" for k, v in current_aliases.items()),
+            height=120,
+            placeholder="3h=UW\n5w=5 Wood\n7w=7 Wood\n9w=9 Wood\nUDI=UDI",
+            key="alias_input",
+            label_visibility="collapsed",
+        )
+
+        if st.button("Save aliases", use_container_width=True):
+            new_aliases: dict[str, str] = {}
+            for line in alias_text.splitlines():
+                if "=" in line:
+                    orig, disp = line.split("=", 1)
+                    orig, disp = orig.strip(), disp.strip()
+                    if orig and disp:
+                        new_aliases[orig] = disp
+            try:
+                api.set_preferences(_token(), new_aliases)
+                st.cache_data.clear()
+                st.success("Saved. Reload the page to see updated club names.")
+            except Exception as e:
+                st.error(f"Could not save: {e}")
 
     # -------------------------
     # Load avg carry (Tab 1)

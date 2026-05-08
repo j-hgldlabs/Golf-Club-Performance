@@ -51,6 +51,16 @@ The analytics engine (`src/golf_analytics/`) is a pure-Python library shared by 
 | **Notebook visualizations** | Finish dispersion scatter, start-vs-curve scatter, per-club dispersion selector, shot-shape summary table |
 | **Performance metrics** | Club speed, ball speed, apex height, carry, total distance, spin rate, and smash factor — all by club |
 
+### Club aliases
+
+The Garmin R10 assigns fixed short labels to clubs (e.g. `3h` for a 3-hybrid slot). If you carry a different club in that slot — a utility wood, a driving iron, etc. — you can define aliases in the **"C) Club aliases"** sidebar section.
+
+- Enter one alias per line in `original=display` format (e.g. `3h=UW`)
+- Click **Save aliases** — aliases are persisted in the `user_preferences` table in Supabase
+- Click **Generate analytics** to recompute all deliverables with the new labels applied
+
+Aliases are applied server-side in `_fetch_shots`, so every analytics endpoint (summary, carry averages, face variance, shot shapes, performance metrics) reflects the rename automatically.
+
 ### Admin controls (admin role only)
 - Invite new users by email (Supabase magic-link)
 - View all registered users with email, role, created date, and last sign-in
@@ -67,12 +77,14 @@ golf_project_refactored_plus_viz/
 │   ├── main.py                   # App entrypoint, CORS, router registration
 │   ├── auth.py                   # JWT dependency (get_current_user, require_admin)
 │   ├── db.py                     # Supabase client dependency
-│   ├── schema.sql                # Postgres schema (sessions, shots, club_summaries)
+│   ├── schema.sql                # Postgres schema (sessions, shots, club_summaries,
+│   │                             #   user_preferences)
 │   └── routers/
 │       ├── auth.py               # POST /auth/login
 │       ├── sessions.py           # POST /sessions/upload, GET /, DELETE /{id}
 │       ├── analytics.py          # POST /generate, GET /summary, /carry-averages,
 │       │                         #   /face-variance, /shot-shapes, /avg-carry, /shots
+│       ├── preferences.py        # GET /preferences, PUT /preferences
 │       └── admin.py              # GET/POST/PATCH/DELETE /admin/users
 │
 ├── src/golf_analytics/           # Reusable analytics engine
@@ -131,10 +143,30 @@ Credentials are in the Supabase dashboard under **Project Settings → API**.
 
 Open the Supabase SQL Editor and run the contents of `api/schema.sql`. It is idempotent — safe to re-run.
 
-This creates three tables with Row Level Security enabled:
+This creates four tables with Row Level Security enabled:
 - `sessions` — one row per uploaded CSV file
 - `shots` — one row per individual shot
 - `club_summaries` — cached computed analytics
+- `user_preferences` — per-user settings (club aliases)
+
+#### Existing installation — migrate to add `user_preferences`
+
+If you already ran `schema.sql` before this feature was added, run only the new table block in your Supabase SQL Editor:
+
+```sql
+create table if not exists user_preferences (
+  user_id      uuid primary key references auth.users (id) on delete cascade,
+  club_aliases jsonb not null default '{}'
+);
+
+alter table user_preferences enable row level security;
+
+drop policy if exists "users manage own preferences" on user_preferences;
+create policy "users manage own preferences"
+  on user_preferences for all
+  using  (user_id = auth.uid())
+  with check (user_id = auth.uid());
+```
 
 ### 4. Run the API
 
@@ -172,6 +204,8 @@ All routes (except `/auth/login` and `/health`) require a `Bearer <token>` heade
 | `GET` | `/analytics/shot-shapes` | Draw/fade/straight classification per club |
 | `GET` | `/analytics/avg-carry` | Base carry + wind-adjusted distances per club |
 | `GET` | `/analytics/shots` | All raw shots in analytics-engine column format |
+| `GET` | `/preferences` | Return the user's saved preferences (club aliases) |
+| `PUT` | `/preferences` | Save/update the user's preferences |
 | `GET` | `/admin/users` | List all users *(admin only)* |
 | `POST` | `/admin/invite` | Invite a new user by email *(admin only — requires a public Site URL; use Supabase dashboard to set passwords on localhost)* |
 | `PATCH` | `/admin/users/role` | Update a user's role *(admin only)* |

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import auth, sessions, analytics, admin
+from api.routers import auth, sessions, analytics, admin, preferences
 
 app = FastAPI(
     title="Golf Analytics API",
@@ -24,7 +24,8 @@ app.add_middleware(
 app.include_router(auth.router,      prefix="/auth",      tags=["auth"])
 app.include_router(sessions.router,  prefix="/sessions",  tags=["sessions"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
-app.include_router(admin.router,     prefix="/admin",     tags=["admin"])
+app.include_router(admin.router,       prefix="/admin",       tags=["admin"])
+app.include_router(preferences.router, prefix="/preferences", tags=["preferences"])
 
 
 @app.get("/health")

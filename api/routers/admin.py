@@ -88,6 +88,7 @@ async def delete_user(
     db.table("shots").delete().eq("user_id", user_id).execute()
     db.table("club_summaries").delete().eq("user_id", user_id).execute()
     db.table("sessions").delete().eq("user_id", user_id).execute()
+    db.table("user_preferences").delete().eq("user_id", user_id).execute()
 
     # Delete the auth user
     db.auth.admin.delete_user(user_id)

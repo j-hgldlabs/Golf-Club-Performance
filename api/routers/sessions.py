@@ -70,7 +70,19 @@ async def upload_session(
     if df.empty:
         raise HTTPException(status_code=422, detail="No shot rows found in uploaded file.")
 
-    # 3. Record the session in Postgres
+    # 3. Remove any existing session for this file so shots don't accumulate on re-upload.
+    #    Shots are deleted via ON DELETE CASCADE on the session FK.
+    existing = (
+        db.table("sessions")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("storage_path", storage_path)
+        .execute()
+    )
+    for row in existing.data or []:
+        db.table("sessions").delete().eq("id", row["id"]).execute()
+
+    # 4. Record the new session in Postgres
     session_id = str(uuid.uuid4())
     db.table("sessions").insert({
         "id": session_id,
@@ -79,7 +91,7 @@ async def upload_session(
         "storage_path": storage_path,
     }).execute()
 
-    # 4. Insert shot rows, keeping only columns that exist in this CSV
+    # 5. Insert shot rows, keeping only columns that exist in this CSV
     present_cols = [c for c in SHOT_COLUMNS if c in df.columns]
     shots_df = df[present_cols].copy()
 
@@ -91,8 +103,12 @@ async def upload_session(
     shots_df["session_id"] = session_id
     shots_df["user_id"] = user.id
 
-    # Replace NaN with None for JSON serialization
-    shot_rows = shots_df.where(shots_df.notna(), other=None).to_dict(orient="records")
+    # Replace NaN with None for JSON serialization (where(..., other=None) doesn't work
+    # on float columns — pandas keeps NaN in float64 dtype; httpx rejects nan in JSON)
+    shot_rows = [
+        {k: None if pd.isna(v) else v for k, v in row.items()}
+        for row in shots_df.to_dict(orient="records")
+    ]
 
     # Rename columns to match Postgres snake_case schema
     col_map = {

@@ -17,6 +17,23 @@ from golf_analytics.cleaning.normalize import normalize_avg_carry
 router = APIRouter()
 
 
+def _get_aliases(user_id: str, db: Client) -> dict[str, str]:
+    """Return the user's club aliases, or {} if none saved / table missing."""
+    try:
+        prefs = (
+            db.table("user_preferences")
+            .select("club_aliases")
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        if prefs and prefs.data:
+            return prefs.data.get("club_aliases") or {}
+    except Exception:
+        pass
+    return {}
+
+
 def _fetch_shots(user_id: str, db: Client) -> pd.DataFrame:
     """Pull all shot rows for a user from Postgres into a DataFrame."""
     result = db.table("shots").select("*").eq("user_id", user_id).execute()
@@ -50,7 +67,13 @@ def _fetch_shots(user_id: str, db: Client) -> pd.DataFrame:
         "total_deviation_angle": "Total Deviation Angle",
         "total_deviation_distance": "Total Deviation Distance",
     }
-    return df.rename(columns=col_map)
+    df = df.rename(columns=col_map)
+
+    aliases = _get_aliases(user_id, db)
+    if aliases and "Club Type" in df.columns:
+        df["Club Type"] = df["Club Type"].replace(aliases)
+
+    return df
 
 
 @router.post("/generate")
@@ -86,7 +109,10 @@ async def generate_analytics(
     summary_df["user_id"] = user.id
 
     # Replace NaN with None so Postgres accepts the payload
-    summary_rows = summary_df.where(summary_df.notna(), other=None).to_dict(orient="records")
+    summary_rows = [
+        {k: None if isinstance(v, float) and pd.isna(v) else v for k, v in row.items()}
+        for row in summary_df.to_dict(orient="records")
+    ]
 
     db.table("club_summaries").delete().eq("user_id", user.id).execute()
     db.table("club_summaries").insert(summary_rows).execute()
@@ -115,6 +141,11 @@ async def club_summary(
             status_code=404,
             detail="No summary found. POST /analytics/generate first.",
         )
+    aliases = _get_aliases(user.id, db)
+    if aliases:
+        for row in result.data:
+            if row.get("club_type") in aliases:
+                row["club_type"] = aliases[row["club_type"]]
     return result.data
 
 
@@ -211,4 +242,7 @@ async def get_shots(
     df = _fetch_shots(user.id, db)
     if df.empty:
         return []
-    return df.where(df.notna(), other=None).to_dict(orient="records")
+    return [
+        {k: None if isinstance(v, float) and pd.isna(v) else v for k, v in row.items()}
+        for row in df.to_dict(orient="records")
+    ]

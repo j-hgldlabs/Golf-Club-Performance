@@ -61,7 +61,7 @@ def upload_session(token: str, file_bytes: bytes, filename: str) -> dict:
         headers=_h(token),
         files={"file": (filename, file_bytes, "text/csv")},
     )
-    r.raise_for_status()
+    _raise(r)
     return r.json()
 
 
@@ -119,6 +119,24 @@ def get_shot_shapes(token: str) -> pd.DataFrame:
     r = requests.get(f"{API_BASE}/analytics/shot-shapes", headers=_h(token))
     r.raise_for_status()
     return pd.DataFrame(r.json())
+
+
+# ---------------------------------------------------------------------------
+# Preferences
+# ---------------------------------------------------------------------------
+
+def get_preferences(token: str) -> dict:
+    """Return the user's preferences (includes club_aliases dict)."""
+    r = requests.get(f"{API_BASE}/preferences", headers=_h(token))
+    r.raise_for_status()
+    return r.json()
+
+
+def set_preferences(token: str, club_aliases: dict[str, str]) -> dict:
+    """Upsert the user's preferences. Returns the saved preferences."""
+    r = requests.put(f"{API_BASE}/preferences", headers=_h(token), json={"club_aliases": club_aliases})
+    _raise(r)
+    return r.json()
 
 
 # ---------------------------------------------------------------------------
