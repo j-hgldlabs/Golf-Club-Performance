@@ -1,0 +1,17 @@
+Golf Club Performance Analytics
+Copyright (C) 2026 Josh Haglund. All rights reserved.
+
+Original Author: Josh Haglund
+Repository: https://github.com/j-hgldlabs/Golf-Club-Performance
+License: GNU Affero General Public License v3 (AGPL-3.0)
+
+This software is the original work of Josh Haglund. Any use, modification,
+or distribution of this software must retain this notice and credit the
+original author.
+
+This software includes:
+- Golf analytics engine for Garmin R10 launch monitor data
+- Physics-adjusted yardage modeling (wind correction, carry percentiles)
+- Shot shape classification and dispersion mapping
+- Streamlit dashboard with Altair visualizations
+- FastAPI backend with Supabase (PostgreSQL) persistence

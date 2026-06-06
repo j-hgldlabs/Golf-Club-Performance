@@ -4,7 +4,6 @@ import time
 
 import streamlit as st
 import pandas as pd
-from pygwalker.api.streamlit import StreamlitRenderer
 
 import golf_analytics.api_client as api
 from golf_analytics.cleaning.normalize import normalize_avg_carry
@@ -21,6 +20,8 @@ from golf_analytics.viz.notebook_charts import (
     plot_start_vs_curve,
     plot_club_dispersion,
     plot_performance_metrics,
+    plot_shot_trajectory,
+    plot_shot_shape_arcs,
 )
 
 
@@ -222,7 +223,22 @@ def run() -> None:
         ) or []
 
         if uploaded_raw:
+            replace_sessions = st.checkbox(
+                "Replace all existing sessions",
+                value=False,
+                help="Delete all prior sessions before uploading. Uncheck to add to existing session history.",
+            )
             if st.button("Upload to Supabase", type="primary", width="stretch"):
+                if replace_sessions:
+                    try:
+                        existing = api.list_sessions(_token())
+                        for s in existing:
+                            api.delete_session(_token(), s["id"])
+                        if existing:
+                            st.info(f"Cleared {len(existing)} existing session(s).")
+                    except Exception as e:
+                        st.error(f"Could not clear sessions: {e}")
+
                 success, failed = 0, 0
                 for f in uploaded_raw:
                     try:
@@ -344,8 +360,13 @@ def run() -> None:
             with tab_pyg:
                 st.subheader("Explore Distance")
                 st.caption("Drag fields to build custom visuals (Pygwalker).")
-                walker = StreamlitRenderer(avg_df)
-                walker.explorer()
+                try:
+                    from pygwalker.api.streamlit import StreamlitRenderer
+                    walker = StreamlitRenderer(avg_df)
+                    walker.explorer()
+                except Exception as e:
+                    st.warning(f"Pygwalker unavailable: {e}")
+                    st.info("Run `pip install 'pygwalker==0.4.9.13'` to restore the drag-drop explorer.")
 
     # -------------------------
     # Tab 2: Deliverables
@@ -436,6 +457,11 @@ def run() -> None:
             st.dataframe(summary_df, width="stretch", hide_index=True)
             _download_button_from_df("Download shape_summary_by_club.csv", summary_df, "shape_summary_by_club.csv")
 
+            st.markdown("---")
+            st.markdown("### Average shot shape by club (top-down)")
+            chart_arcs = plot_shot_shape_arcs(df_sc)
+            st.altair_chart(chart_arcs, width="stretch")
+
     # -------------------------
     # Tab 4: Performance metrics
     # -------------------------
@@ -446,6 +472,12 @@ def run() -> None:
         if merged is None:
             st.info(merged_error or "No shot data found.")
         else:
+            st.markdown("### Ball Flight Trajectory")
+            chart_apex = plot_shot_trajectory(merged)
+            st.altair_chart(chart_apex, width="stretch")
+
+            st.markdown("---")
+            st.markdown("### Performance metrics by club")
             chart_perf = plot_performance_metrics(merged)
             st.altair_chart(chart_perf, width="stretch")
 

@@ -30,7 +30,22 @@ data/
 .env.local
 .env.*.local
 .streamlit/secrets.toml
+secrets.py
+*.pem
+*.key
+*.p12
+*credentials*.json
+service_account*.json
+supabase_key*.txt
 
 # SQL dumps/exports — but NOT the project schema
 *.sql
 !api/schema.sql
+
+# Claude AI — project instructions contain internal architecture details
+CLAUDE.md
+
+# Project documentation — must always be committed
+!LICENSE
+!CONTRIBUTING.md
+!NOTICE

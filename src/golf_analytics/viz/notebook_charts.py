@@ -221,16 +221,311 @@ def plot_club_dispersion(df: pd.DataFrame, club: str) -> alt.Chart:
     return chart.interactive()
 
 
+def plot_shot_trajectory(df: pd.DataFrame) -> alt.Chart:
+    """
+    Ball flight trajectory per club: asymmetric two-segment parabola + decaying roll.
+    Launch angle positions the apex along the flight path:
+      x_apex = carry × clamp(0.38 + 0.004 × launch_angle_deg, 0.38, 0.55)
+    Low-launch clubs (driver) peak early with a long shallow descent;
+    high-launch clubs (wedges) peak closer to mid-flight.
+    Each club is a separate colored arc. X = distance (yds), Y = height (ft).
+    """
+    fn = "plot_shot_trajectory"
+    _require_cols(df, ["Club Type", "Apex Height", "Carry Distance"], fn)
+
+    dfc = df[["Club Type", "Apex Height", "Carry Distance"]].copy()
+    dfc["Apex Height"] = _safe_numeric(dfc["Apex Height"])
+    dfc["Carry Distance"] = _safe_numeric(dfc["Carry Distance"])
+
+    has_launch = "Launch Angle" in df.columns
+    if has_launch:
+        dfc["Launch Angle"] = _safe_numeric(df["Launch Angle"])
+
+    has_total = "Total Distance" in df.columns
+    if has_total:
+        dfc["Total Distance"] = _safe_numeric(df["Total Distance"])
+
+    grouped = (
+        dfc.groupby("Club Type", dropna=True)
+        .mean(numeric_only=True)
+        .reset_index()
+        .sort_values("Carry Distance")
+    )
+
+    records: list[dict] = []
+    for _, row in grouped.iterrows():
+        club = row["Club Type"]
+        carry = float(row["Carry Distance"])
+        apex = float(row["Apex Height"])
+        launch = (
+            float(row["Launch Angle"])
+            if has_launch and pd.notna(row.get("Launch Angle"))
+            else 20.0
+        )
+        total = (
+            float(row["Total Distance"])
+            if has_total and pd.notna(row.get("Total Distance"))
+            else carry * 1.08
+        )
+
+        if carry <= 0 or apex <= 0 or not np.isfinite(carry) or not np.isfinite(apex):
+            continue
+
+        apex_ft = apex * 3.0  # convert yards → feet for display
+
+        # Apex position: launch angle shifts where the peak occurs along the carry
+        apex_frac = float(np.clip(0.38 + 0.004 * launch, 0.38, 0.55))
+        x_apex = carry * apex_frac
+
+        # Ascending segment (0 → x_apex): quadratic reaching apex_ft at x_apex
+        # y = H · x · (2·x_apex − x) / x_apex²
+        for x in np.linspace(0.0, x_apex, 120):
+            y = apex_ft * x * (2.0 * x_apex - x) / x_apex ** 2
+            records.append({
+                "Club Type": club,
+                "x": float(x),
+                "y": max(0.0, float(y)),
+                "segment": "carry",
+                "launch_deg": round(launch, 1),
+                "carry_yd": round(carry, 1),
+                "apex_ft": round(apex_ft, 1),
+                "total_yd": round(total, 1),
+            })
+
+        # Descending segment (x_apex → carry): quadratic back to ground
+        # y = H · (1 − ((x − x_apex) / descent_span)²)
+        # Matches dy/dx = 0 at x_apex so the junction with the ascending arc is smooth.
+        descent_span = carry - x_apex
+        for x in np.linspace(x_apex, carry, 80):
+            y = apex_ft * (1.0 - ((x - x_apex) / descent_span) ** 2)
+            records.append({
+                "Club Type": club,
+                "x": float(x),
+                "y": max(0.0, float(y)),
+                "segment": "carry",
+                "launch_deg": round(launch, 1),
+                "carry_yd": round(carry, 1),
+                "apex_ft": round(apex_ft, 1),
+                "total_yd": round(total, 1),
+            })
+
+        # Roll — decaying sine bounces from carry to total
+        roll = total - carry
+        if roll > 0:
+            xs_roll = np.linspace(carry, total, 80)
+            t = (xs_roll - carry) / roll
+            ys_roll = apex_ft * 0.06 * np.exp(-4.0 * t) * np.abs(np.sin(4.0 * np.pi * t))
+            for x, y in zip(xs_roll, ys_roll):
+                records.append({
+                    "Club Type": club,
+                    "x": float(x),
+                    "y": max(0.0, float(y)),
+                    "segment": "roll",
+                    "launch_deg": round(launch, 1),
+                    "carry_yd": round(carry, 1),
+                    "apex_ft": round(apex_ft, 1),
+                    "total_yd": round(total, 1),
+                })
+
+    traj_df = pd.DataFrame(records)
+
+    ground = (
+        alt.Chart(pd.DataFrame({"y": [0]}))
+        .mark_rule(color="#999999", strokeWidth=1.5)
+        .encode(y="y:Q")
+    )
+
+    tooltip = [
+        alt.Tooltip("Club Type:N", title="Club"),
+        alt.Tooltip("launch_deg:Q", format=".1f", title="Avg Launch Angle (°)"),
+        alt.Tooltip("carry_yd:Q", format=".1f", title="Avg Carry (yds)"),
+        alt.Tooltip("apex_ft:Q", format=".1f", title="Avg Apex (ft)"),
+        alt.Tooltip("total_yd:Q", format=".1f", title="Avg Total (yds)"),
+    ]
+
+    carry_lines = (
+        alt.Chart(traj_df[traj_df["segment"] == "carry"])
+        .mark_line(strokeWidth=2.5)
+        .encode(
+            x=alt.X("x:Q", title="Distance (yds)"),
+            y=alt.Y("y:Q", title="Apex Height (ft)", scale=alt.Scale(domainMin=0)),
+            color=alt.Color("Club Type:N", legend=alt.Legend(title="Club")),
+            detail="Club Type:N",
+            tooltip=tooltip,
+        )
+    )
+
+    roll_df = traj_df[traj_df["segment"] == "roll"]
+    roll_lines = (
+        alt.Chart(roll_df)
+        .mark_line(strokeWidth=1.5, opacity=0.6)
+        .encode(
+            x=alt.X("x:Q"),
+            y=alt.Y("y:Q"),
+            color=alt.Color("Club Type:N", legend=None),
+            detail="Club Type:N",
+        )
+    ) if not roll_df.empty else None
+
+    layers: list[alt.Chart] = [ground, carry_lines]
+    if roll_lines is not None:
+        layers.append(roll_lines)
+
+    return (
+        alt.layer(*layers)
+        .properties(
+            title=alt.TitleParams(
+                text="Ball Flight Trajectory by Club",
+                fontSize=TITLE_FONTSIZE,
+                anchor="start",
+                dy=-10,
+            ),
+            height=380,
+            width=760,
+        )
+        .configure_axis(labelFontSize=LABEL_FONTSIZE, titleFontSize=LABEL_FONTSIZE)
+        .interactive()
+    )
+
+
+def plot_shot_shape_arcs(df_sc: pd.DataFrame) -> alt.Chart:
+    """
+    Top-down bird's-eye view of average shot paths per club.
+    Each club is a quadratic Bezier arc from origin (0, 0) to (avg_finish_x, avg_carry),
+    curved by avg_start_yards which encodes the launch direction.
+
+    Control point: P1 = (start_yards × 0.45, carry × 0.45)
+    This preserves the launch direction angle at the tee while giving visible curvature.
+    """
+    fn = "plot_shot_shape_arcs"
+    _require_cols(df_sc, ["Club Type", "start_yards", "finish_x", "finish_y"], fn)
+
+    grouped = (
+        df_sc.groupby("Club Type", dropna=True)
+        .agg(
+            avg_start=("start_yards", "mean"),
+            avg_finish_x=("finish_x", "mean"),
+            avg_carry=("finish_y", "mean"),
+            shots=("finish_y", "count"),
+        )
+        .reset_index()
+        .sort_values("avg_carry")
+    )
+
+    arc_records: list[dict] = []
+    dot_records: list[dict] = []
+
+    for _, row in grouped.iterrows():
+        club = str(row["Club Type"])
+        sx = float(row["avg_start"])
+        fx = float(row["avg_finish_x"])
+        fy = float(row["avg_carry"])
+        shots = int(row["shots"])
+
+        if not (np.isfinite(sx) and np.isfinite(fx) and np.isfinite(fy)) or fy <= 0:
+            continue
+
+        # Quadratic Bezier: preserves launch direction at origin
+        # P0 = (0,0), P1 = (sx*k, fy*k), P2 = (fx, fy)
+        k = 0.45
+        p0 = np.array([0.0, 0.0])
+        p1 = np.array([sx * k, fy * k])
+        p2 = np.array([fx, fy])
+
+        t = np.linspace(0.0, 1.0, 150)
+        bx = (1 - t) ** 2 * p0[0] + 2 * t * (1 - t) * p1[0] + t ** 2 * p2[0]
+        by = (1 - t) ** 2 * p0[1] + 2 * t * (1 - t) * p1[1] + t ** 2 * p2[1]
+
+        shared = {
+            "Club Type": club,
+            "avg_carry": round(fy, 1),
+            "avg_offline": round(fx, 1),
+            "avg_start": round(sx, 1),
+            "shots": shots,
+        }
+        for x, y in zip(bx, by):
+            arc_records.append({"x": float(x), "y": float(y), **shared})
+
+        dot_records.append({"x": fx, "y": fy, **shared})
+
+    arc_df = pd.DataFrame(arc_records)
+    dot_df = pd.DataFrame(dot_records)
+
+    tooltip = [
+        alt.Tooltip("Club Type:N", title="Club"),
+        alt.Tooltip("avg_carry:Q", format=".1f", title="Avg Carry (yds)"),
+        alt.Tooltip("avg_offline:Q", format=".1f", title="Avg Offline (yds)"),
+        alt.Tooltip("avg_start:Q", format=".1f", title="Avg Start Dir (yds)"),
+        alt.Tooltip("shots:Q", title="Shots"),
+    ]
+
+    target_line = (
+        alt.Chart(pd.DataFrame({"x": [0]}))
+        .mark_rule(color="#aaaaaa", strokeDash=[5, 4], strokeWidth=1.5)
+        .encode(x="x:Q")
+    )
+
+    arcs = (
+        alt.Chart(arc_df)
+        .mark_line(strokeWidth=2.5)
+        .encode(
+            x=alt.X("x:Q", title="Lateral Deviation (yds  −left / +right)"),
+            y=alt.Y("y:Q", title="Carry Distance (yds)", scale=alt.Scale(domainMin=0)),
+            color=alt.Color("Club Type:N", legend=alt.Legend(title="Club")),
+            detail="Club Type:N",
+            tooltip=tooltip,
+        )
+    )
+
+    dots = (
+        alt.Chart(dot_df)
+        .mark_point(filled=True, size=90)
+        .encode(
+            x=alt.X("x:Q"),
+            y=alt.Y("y:Q"),
+            color=alt.Color("Club Type:N", legend=None),
+            tooltip=tooltip,
+        )
+    )
+
+    club_labels = (
+        alt.Chart(dot_df)
+        .mark_text(fontSize=11, fontWeight="bold", dx=8, align="left")
+        .encode(
+            x=alt.X("x:Q"),
+            y=alt.Y("y:Q"),
+            text="Club Type:N",
+            color=alt.Color("Club Type:N", legend=None),
+        )
+    )
+
+    return (
+        alt.layer(target_line, arcs, dots, club_labels)
+        .properties(
+            title=alt.TitleParams(
+                text="Average Shot Shape by Club (Top-Down View)",
+                fontSize=TITLE_FONTSIZE,
+                anchor="start",
+                dy=-10,
+            ),
+            height=600,
+            width=680,
+        )
+        .configure_axis(labelFontSize=LABEL_FONTSIZE, titleFontSize=LABEL_FONTSIZE)
+        .interactive()
+    )
+
+
 def plot_performance_metrics(df: pd.DataFrame) -> alt.Chart:
     """
     Interactive selector to view per-club averages for key performance metrics.
-    Metrics: Club Speed, Ball Speed, Apex Height, Carry Distance, Total Distance, Spin Rate, and Smash Factor.
+    Metrics: Club Speed, Ball Speed, Carry Distance, Total Distance, Spin Rate, and Smash Factor.
+    Apex Height is rendered separately via plot_apex_height().
     """
     fn = "plot_performance_metrics"
     metrics = [
         ("Club Speed", "Club Speed (mph)"),
         ("Ball Speed", "Ball Speed (mph)"),
-        ("Apex Height", "Apex (ft)"),
         ("Carry Distance", "Carry Distance (yds)"),
         ("Total Distance", "Total Distance (yds)"),
         ("Smash Factor", "Smash Factor"),
